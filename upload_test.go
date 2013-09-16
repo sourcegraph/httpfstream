@@ -20,6 +20,7 @@ type uploadTest struct {
 func TestUpload(t *testing.T) {
 	tests := []uploadTest{
 		{path: "/foo", data: bytes.NewReader([]byte("bar")), statusCode: http.StatusOK},
+		{path: "/foo", data: bytes.NewBuffer([]byte("bar")), statusCode: http.StatusOK},
 		{path: "/foo", statusCode: http.StatusOK},
 
 		{path: "/", statusCode: http.StatusBadRequest, msg: "path must not end with '/'"},
