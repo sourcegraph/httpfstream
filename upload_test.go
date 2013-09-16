@@ -37,7 +37,7 @@ func testUpload(t *testing.T, test uploadTest) {
 	server := newTestServer()
 	defer server.close()
 
-	req, err := http.NewRequest("PUT", server.URL+test.path, nil)
+	req, err := http.NewRequest("PUT", server.URL+test.path, test.data)
 	if err != nil {
 		t.Fatalf("%s: NewRequest: %s", label, err)
 	}
