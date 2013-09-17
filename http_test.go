@@ -4,6 +4,7 @@ import (
 	"github.com/sourcegraph/rwvfs"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,7 +29,9 @@ func newTestServer() testServer {
 
 	rootMux := http.NewServeMux()
 	fs := rwvfs.OS(dir)
-	rootMux.Handle("/", New(fs))
+	h := New(fs)
+	h.Log = log.New(os.Stderr, "", 0)
+	rootMux.Handle("/", h)
 	return testServer{
 		Server: httptest.NewServer(rootMux),
 		dir:    dir,
@@ -41,8 +44,10 @@ func (s testServer) close() {
 	os.RemoveAll(s.dir)
 }
 
-func readAll(t *testing.T, rdr io.ReadCloser) []byte {
-	defer rdr.Close()
+func readAll(t *testing.T, rdr io.Reader) []byte {
+	if c, ok := rdr.(io.Closer); ok {
+		defer c.Close()
+	}
 	data, err := ioutil.ReadAll(rdr)
 	if err != nil {
 		t.Fatal("ReadAll", err)
