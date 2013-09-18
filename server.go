@@ -1,44 +1,56 @@
 package httpfstream
 
 import (
-	"code.google.com/p/go.tools/godoc/vfs/httpfs"
-	"github.com/garyburd/go-websocket/websocket"
-	"github.com/sourcegraph/rwvfs"
+	"bytes"
+	"errors"
+	"github.com/sqs/go-websocket/websocket"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	pathpkg "path"
+	"path/filepath"
+	"sync"
 	"time"
 )
 
-func New(root rwvfs.FileSystem) handler {
+func New(root string) handler {
 	return handler{
-		Root:   root,
-		httpFS: httpfs.New(root),
+		Root:      root,
+		httpFS:    http.Dir(root),
+		writers:   make(map[string]struct{}),
+		followers: make(map[string]map[*http.Request]chan []byte),
 	}
 }
 
 type handler struct {
-	Root rwvfs.FileSystem
+	Root string
 	Log  *log.Logger
 
 	httpFS http.FileSystem
+
+	writers   map[string]struct{}
+	writersMu sync.Mutex
+
+	followers   map[string]map[*http.Request]chan []byte
+	followersMu sync.Mutex
 }
 
-const xMethod = "X-Method"
+const xVerb = "X-Verb"
 
 func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	verb := r.Header.Get(xVerb)
+	if verb == "" {
+		verb = r.URL.Query().Get("verb")
+	}
+
 	switch r.Method {
-	case "HEAD":
-		h.Head(w, r)
 	case "GET":
-		switch r.Header.Get(xMethod) {
-		case "GET":
-			h.Get(w, r)
-		case "PUT":
-			h.Put(w, r)
+		switch verb {
+		case "APPEND":
+			h.Append(w, r)
 		default:
-			http.Error(w, xMethod+" value not supported", http.StatusBadRequest)
+			h.Follow(w, r)
 		}
 	default:
 		http.Error(w, "method not supported", http.StatusMethodNotAllowed)
@@ -52,55 +64,112 @@ func (h handler) logf(msg string, v ...interface{}) {
 }
 
 const (
-	readBufSize  = 1024
-	writeBufSize = 1024
+	readBufSize  = 10 * 1024 // 10 kb
+	writeBufSize = 10 * 1024 // 10 kb
+
+	writeChanSize = 50
 )
 
 var (
-	readWait  = 1 * time.Second
-	writeWait = 1 * time.Second
+	followKeepaliveInterval = 3 * time.Second
+	readWait                = 5 * time.Second
+	writeWait               = 5 * time.Second
 )
 
-func (h handler) Head(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-
-	f, err := h.Root.Open(r.URL.Path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "404 not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "failed to open file: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer f.Close()
+func (h handler) resolve(path string) string {
+	path = pathpkg.Clean("/" + path)
+	return filepath.Join(string(h.Root), path)
 }
 
-func (h handler) Get(w http.ResponseWriter, r *http.Request) {
-	if h.Log != nil {
-		h.Log.Printf("GET %s", r.URL.Path)
-	}
+var ErrWriterConflict = errors.New("path already has an active writer")
 
-	if r.URL.Path[len(r.URL.Path)-1] == '/' {
-		http.Error(w, "path must not end with '/'", http.StatusBadRequest)
+func (h handler) addWriter(path string) error {
+	h.writersMu.Lock()
+	defer h.writersMu.Unlock()
+	if _, present := h.writers[path]; !present {
+		h.writers[path] = struct{}{}
+		return nil
+	}
+	return ErrWriterConflict
+}
+
+func (h handler) removeWriter(path string) {
+	h.writersMu.Lock()
+	defer h.writersMu.Unlock()
+	delete(h.writers, path)
+}
+
+func (h handler) addFollower(path string, r *http.Request, c chan []byte) {
+	h.followersMu.Lock()
+	defer h.followersMu.Unlock()
+	if _, present := h.followers[path]; !present {
+		h.followers[path] = make(map[*http.Request]chan []byte)
+	}
+	h.followers[path][r] = c
+}
+
+func (h handler) getFollowers(path string) []chan []byte {
+	h.followersMu.Lock()
+	defer h.followersMu.Unlock()
+	fs := make([]chan []byte, len(h.followers[path]))
+	i := 0
+	for _, f := range h.followers[path] {
+		fs[i] = f
+		i++
+	}
+	return fs
+}
+
+func (h handler) removeFollower(path string, r *http.Request) {
+	h.followersMu.Lock()
+	defer h.followersMu.Unlock()
+	delete(h.followers[path], r)
+	if len(h.followers[path]) == 0 {
+		delete(h.followers, path)
+	}
+}
+
+func (h handler) isWriting(path string) bool {
+	h.writersMu.Lock()
+	defer h.writersMu.Unlock()
+	_, present := h.writers[path]
+	return present
+}
+
+func (h handler) serveFile(w http.ResponseWriter, r *http.Request) {
+	http.FileServer(h.httpFS).ServeHTTP(w, r)
+}
+
+func (h handler) Follow(w http.ResponseWriter, r *http.Request) {
+	path := h.resolve(r.URL.Path)
+	h.logf("FOLLOW %s", path)
+
+	// If this file isn't currently being written to, we don't need to update to
+	// a WebSocket; we can just return the static file.
+	if !h.isWriting(path) {
+		h.serveFile(w, r)
 		return
 	}
 
-	f, err := h.Root.Open(r.URL.Path)
+	c := make(chan []byte)
+	h.addFollower(path, r, c)
+	defer h.removeFollower(path, r)
+
+	// TODO(sqs): race conditions galore
+
+	f, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "404 not found", http.StatusNotFound)
-			return
-		}
 		http.Error(w, "failed to open file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer f.Close()
 
+	// Open WebSocket.
 	ws, err := websocket.Upgrade(w, r.Header, nil, readBufSize, writeBufSize)
 	if err != nil {
 		if _, ok := err.(websocket.HandshakeError); ok {
-			h.logf("not a WebSocket handshake: %s", err)
+			// Serve file via HTTP (not WebSocket).
+			h.serveFile(w, r)
 			return
 		}
 		h.logf("failed to upgrade to WebSocket: %s", err)
@@ -108,55 +177,97 @@ func (h handler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
+	// Send persisted file contents.
 	for {
-		w, err := ws.NextWriter(websocket.OpText)
+		sw, err := ws.NextWriter(websocket.OpText)
 		if err != nil {
-			h.logf("NextWriter failed: %s", err)
-			return
-		}
-		var n int64
-		n, err = io.Copy(w, f)
-		if err != nil {
-			h.logf("Copy to WebSocket failed: %s", err)
-			w.Close()
+			h.logf("NextWriter for file failed: %s", err)
 			return
 		}
 
-		err = w.Close()
+		n, err := io.Copy(sw, f)
 		if err != nil {
-			h.logf("Failed to close WebSocket: %s", err)
+			h.logf("File write to WebSocket failed: %s", err)
+			sw.Close()
 			return
 		}
 
-		h.logf("Read %d bytes from %s to WebSocket", n, r.URL.Path)
+		err = sw.Close()
+		if err != nil {
+			h.logf("Failed to close WebSocket file writer: %s", err)
+			return
+		}
+
+		// Finished reading file.
 		if n == 0 {
-			return
+			break
 		}
 	}
 
+	// Follow new writes to file.
+	var lastPing time.Time
+	for {
+		tick := time.NewTicker(50 * time.Millisecond)
+		select {
+		case <-tick.C:
+			if !h.isWriting(path) {
+				goto done
+			}
+			if time.Since(lastPing) > followKeepaliveInterval {
+				ws.WriteMessage(websocket.OpPing, []byte{})
+				lastPing = time.Now()
+			}
+		case data := <-c:
+			sw, err := ws.NextWriter(websocket.OpText)
+			if err != nil {
+				h.logf("NextWriter failed: %s", err)
+				return
+			}
+
+			_, err = sw.Write(data)
+			if err != nil {
+				h.logf("Write to WebSocket failed: %s", err)
+				sw.Close()
+				return
+			}
+
+			err = sw.Close()
+			if err != nil {
+				h.logf("Failed to close WebSocket writer: %s", err)
+				return
+			}
+		}
+	}
+
+done:
+	err = ws.WriteControl(websocket.OpClose, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Time{})
 	if err != nil {
-		http.Error(w, "failed to copy from file to response: "+err.Error(), http.StatusInternalServerError)
+		h.logf("Failed to close WebSocket: %s", err)
 		return
 	}
 
 	err = f.Close()
 	if err != nil {
-		http.Error(w, "failed to close destination file: "+err.Error(), http.StatusInternalServerError)
+		h.logf("Failed to close destination file: %s", err)
 		return
 	}
 }
 
-func (h handler) Put(w http.ResponseWriter, r *http.Request) {
-	h.logf("PUT %s", r.URL.Path)
+func (h handler) Append(w http.ResponseWriter, r *http.Request) {
+	path := h.resolve(r.URL.Path)
+	h.logf("APPEND %s", path)
 
 	defer r.Body.Close()
 
-	if r.URL.Path[len(r.URL.Path)-1] == '/' {
-		http.Error(w, "path must not end with '/'", http.StatusBadRequest)
+	err := h.addWriter(path)
+	if err != nil {
+		h.logf("addWriter %s: %s", err)
+		http.Error(w, "addWriter: "+err.Error(), http.StatusForbidden)
 		return
 	}
+	defer h.removeWriter(path)
 
-	f, err := h.Root.OpenFile(r.URL.Path, os.O_WRONLY|os.O_CREATE|os.O_APPEND)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
 		http.Error(w, "failed to open destination file for writing: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -174,8 +285,8 @@ func (h handler) Put(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
+	ws.SetReadDeadline(time.Now().Add(readWait))
 	for {
-		ws.SetReadDeadline(time.Now().Add(readWait))
 		op, rd, err := ws.NextReader()
 		if err != nil {
 			if err != io.ErrUnexpectedEOF {
@@ -183,32 +294,38 @@ func (h handler) Put(w http.ResponseWriter, r *http.Request) {
 			}
 			break
 		}
-		if op != websocket.OpBinary && op != websocket.OpText {
-			continue
-		}
+		switch op {
+		case websocket.OpPong:
+			ws.SetReadDeadline(time.Now().Add(readWait))
+		case websocket.OpText:
+			var buf bytes.Buffer
+			mw := io.MultiWriter(f, &buf)
 
-		n, err := io.Copy(f, rd)
-		if err != nil {
-			h.logf("Read from WebSocket failed: %s", err)
-			return
-		}
+			// Persist to file.
+			_, err := io.Copy(mw, rd)
+			if err != nil {
+				h.logf("Read from WebSocket failed: %s", err)
+				return
+			}
 
-		h.logf("Read %d bytes from WebSocket to %s", n, r.URL.Path)
-
-		if f, ok := f.(*os.File); ok {
-			f.Sync()
+			// Broadcast to followers.
+			followers := h.getFollowers(path)
+			for _, fc := range followers {
+				fc <- buf.Bytes()
+			}
+			ws.SetReadDeadline(time.Now().Add(readWait))
 		}
 	}
 
 	err = r.Body.Close()
 	if err != nil {
-		http.Error(w, "failed to close upload stream: "+err.Error(), http.StatusInternalServerError)
+		h.logf("failed to close upload stream: %s", err)
 		return
 	}
 
 	err = f.Close()
 	if err != nil {
-		http.Error(w, "failed to close destination file: "+err.Error(), http.StatusInternalServerError)
+		h.logf("failed to close destination file: %s", err)
 		return
 	}
 }

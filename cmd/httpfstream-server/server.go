@@ -3,9 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/gorilla/handlers"
 	"github.com/sourcegraph/httpfstream"
-	"github.com/sourcegraph/rwvfs"
 	"log"
 	"net/http"
 	"os"
@@ -36,9 +34,9 @@ func main() {
 
 	os.MkdirAll(*root, 0700)
 
-	h := httpfstream.New(rwvfs.OS(*root))
+	h := httpfstream.New(*root)
 	h.Log = log.New(os.Stderr, "", 0)
-	http.Handle("/", handlers.CombinedLoggingHandler(os.Stdout, h))
+	http.Handle("/", h)
 
 	log.Printf("Starting server on %s\n", *bindAddr)
 	err := http.ListenAndServe(*bindAddr, nil)

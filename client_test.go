@@ -5,36 +5,40 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
-type getTest struct {
+type followTest struct {
 	path       string
 	body       string
 	writeFiles map[string]string
 	err        error
 }
 
-func TestGet(t *testing.T) {
-	tests := []getTest{
+func TestFollow(t *testing.T) {
+	t.Parallel()
+
+	tests := []followTest{
 		{path: "/foo1", body: "bar", writeFiles: map[string]string{"/foo1": "bar"}},
 
 		{path: "/doesntexist", err: os.ErrNotExist},
 	}
 	for _, test := range tests {
-		testGet(t, test)
+		testFollow(t, test)
 	}
 }
 
-func testGet(t *testing.T, test getTest) {
+func testFollow(t *testing.T, test followTest) {
 	label := test.path
 
 	server := newTestServer()
 	defer server.close()
 
 	for path, data := range test.writeFiles {
-		w, err := server.fs.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_EXCL)
+		path = filepath.Join(server.dir, path)
+		w, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_EXCL, 0644)
 		if err != nil {
 			t.Fatalf("%s: fs.WriterOpen: %s", label, err)
 		}
@@ -49,12 +53,12 @@ func testGet(t *testing.T, test getTest) {
 	}
 
 	u, _ := url.Parse(server.URL + test.path)
-	r, err := Get(u)
+	r, err := Follow(u)
 	if err == nil {
 		defer r.Close()
 	}
 	if test.err != err {
-		t.Errorf("%s: Get: want error %v, got %v", label, test.err, err)
+		t.Errorf("%s: Follow: want error %v, got %v", label, test.err, err)
 		return
 	}
 	if test.err != nil {
@@ -67,53 +71,57 @@ func testGet(t *testing.T, test getTest) {
 	}
 }
 
-type putTest struct {
+type appendTest struct {
 	path     string
 	data     io.Reader
 	fileData string
 	err      error
 }
 
-func TestPut(t *testing.T) {
-	tests := []putTest{
+func TestAppend(t *testing.T) {
+	t.Parallel()
+
+	tests := []appendTest{
 		{path: "/foo1", data: bytes.NewReader([]byte("bar")), fileData: "bar"},
 		{path: "/foo2", data: bytes.NewBuffer([]byte("bar")), fileData: "bar"},
-		{path: "/foo3", data: &slowReader{R: &fixedReader{R: bytes.NewReader([]byte("quxx")), N: 2}, Wait: time.Millisecond * 25}, fileData: "quxx"},
+		{path: "/foo3", data: &slowReader{R: &fixedReader{R: bytes.NewReader([]byte("quxx")), N: 2}, Wait: time.Millisecond * 10}, fileData: "quxx"},
 	}
 	for _, test := range tests {
-		testPut(t, test)
+		testAppend(t, test)
 	}
 }
 
-func testPut(t *testing.T, test putTest) {
+func testAppend(t *testing.T, test appendTest) {
 	label := test.path
 
 	server := newTestServer()
 	defer server.close()
+	fpath := filepath.Join(server.dir, test.path)
 
 	u, _ := url.Parse(server.URL + test.path)
-	err := Put(u, test.data)
+	err := Append(u, test.data)
 	if test.err != err {
-		t.Errorf("%s: Put: want error %v, got %v", label, test.err, err)
+		t.Errorf("%s: Append: want error %v, got %v", label, test.err, err)
 		return
 	}
 	if test.err != nil {
 		return
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
-	_, err = server.fs.Stat(test.path)
+	_, err = os.Stat(fpath)
 	if err != nil {
 		t.Errorf("%s: Stat: %s", label, err)
 		return
 	}
 
-	f, err := server.fs.Open(test.path)
+	f, err := os.Open(fpath)
 	if err != nil {
 		t.Errorf("%s: Open: %s", label, err)
 		return
 	}
+	defer f.Close()
 	fileData := string(readAll(t, f))
 	if test.fileData != fileData {
 		t.Errorf("%s: want fileData == %q, got %q", label, test.fileData, fileData)
