@@ -14,8 +14,9 @@ import (
 	"time"
 )
 
-func New(root string) handler {
-	return handler{
+// New returns a new http.Handler for httpfstream.
+func New(root string) Handler {
+	return Handler{
 		Root:      root,
 		httpFS:    http.Dir(root),
 		writers:   make(map[string]struct{}),
@@ -23,7 +24,7 @@ func New(root string) handler {
 	}
 }
 
-type handler struct {
+type Handler struct {
 	Root string
 	Log  *log.Logger
 
@@ -38,7 +39,8 @@ type handler struct {
 
 const xVerb = "X-Verb"
 
-func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP implements net/http.Handler.
+func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	verb := r.Header.Get(xVerb)
 	if verb == "" {
 		verb = r.URL.Query().Get("verb")
@@ -57,7 +59,7 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h handler) logf(msg string, v ...interface{}) {
+func (h Handler) logf(msg string, v ...interface{}) {
 	if h.Log != nil {
 		h.Log.Printf(msg, v...)
 	}
@@ -76,14 +78,16 @@ var (
 	writeWait               = 5 * time.Second
 )
 
-func (h handler) resolve(path string) string {
+func (h Handler) resolve(path string) string {
 	path = pathpkg.Clean("/" + path)
 	return filepath.Join(string(h.Root), path)
 }
 
+// ErrWriterConflict indicates that the requested path is currently being
+// written by another writer. A path may have at most one active writer.
 var ErrWriterConflict = errors.New("path already has an active writer")
 
-func (h handler) addWriter(path string) error {
+func (h Handler) addWriter(path string) error {
 	h.writersMu.Lock()
 	defer h.writersMu.Unlock()
 	if _, present := h.writers[path]; !present {
@@ -93,13 +97,13 @@ func (h handler) addWriter(path string) error {
 	return ErrWriterConflict
 }
 
-func (h handler) removeWriter(path string) {
+func (h Handler) removeWriter(path string) {
 	h.writersMu.Lock()
 	defer h.writersMu.Unlock()
 	delete(h.writers, path)
 }
 
-func (h handler) addFollower(path string, r *http.Request, c chan []byte) {
+func (h Handler) addFollower(path string, r *http.Request, c chan []byte) {
 	h.followersMu.Lock()
 	defer h.followersMu.Unlock()
 	if _, present := h.followers[path]; !present {
@@ -108,7 +112,7 @@ func (h handler) addFollower(path string, r *http.Request, c chan []byte) {
 	h.followers[path][r] = c
 }
 
-func (h handler) getFollowers(path string) []chan []byte {
+func (h Handler) getFollowers(path string) []chan []byte {
 	h.followersMu.Lock()
 	defer h.followersMu.Unlock()
 	fs := make([]chan []byte, len(h.followers[path]))
@@ -120,7 +124,7 @@ func (h handler) getFollowers(path string) []chan []byte {
 	return fs
 }
 
-func (h handler) removeFollower(path string, r *http.Request) {
+func (h Handler) removeFollower(path string, r *http.Request) {
 	h.followersMu.Lock()
 	defer h.followersMu.Unlock()
 	delete(h.followers[path], r)
@@ -129,18 +133,20 @@ func (h handler) removeFollower(path string, r *http.Request) {
 	}
 }
 
-func (h handler) isWriting(path string) bool {
+func (h Handler) isWriting(path string) bool {
 	h.writersMu.Lock()
 	defer h.writersMu.Unlock()
 	_, present := h.writers[path]
 	return present
 }
 
-func (h handler) serveFile(w http.ResponseWriter, r *http.Request) {
+func (h Handler) serveFile(w http.ResponseWriter, r *http.Request) {
 	http.FileServer(h.httpFS).ServeHTTP(w, r)
 }
 
-func (h handler) Follow(w http.ResponseWriter, r *http.Request) {
+// Follow handles FOLLOW requests to retrieve the contents of a file and a
+// real-time stream of data that is appended to the file.
+func (h Handler) Follow(w http.ResponseWriter, r *http.Request) {
 	path := h.resolve(r.URL.Path)
 	h.logf("FOLLOW %s", path)
 
@@ -253,7 +259,8 @@ done:
 	}
 }
 
-func (h handler) Append(w http.ResponseWriter, r *http.Request) {
+// Append handles APPEND requests and appends data to a file.
+func (h Handler) Append(w http.ResponseWriter, r *http.Request) {
 	path := h.resolve(r.URL.Path)
 	h.logf("APPEND %s", path)
 

@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+// Follow opens a WebSocket to the file at the given URL (which must be handled
+// by httpfstream's HTTP handler) and returns the file's contents. The
+// io.ReadCloser continues to return data (blocking as needed) if, and as long
+// as, there is an active writer to the file.
 func Follow(u *url.URL) (io.ReadCloser, error) {
 	ws, resp, err := newClient(u, "FOLLOW")
 	if err == websocket.ErrBadHandshake {
@@ -32,6 +36,7 @@ type webSocketReadCloser struct {
 	ws *websocket.Conn
 }
 
+// Read implements io.Reader.
 func (r *webSocketReadCloser) Read(p []byte) (n int, err error) {
 	op, rdr, err := r.ws.NextReader()
 	if err != nil {
@@ -48,10 +53,12 @@ func (r *webSocketReadCloser) Read(p []byte) (n int, err error) {
 	return
 }
 
+// Close implements io.Closer.
 func (r *webSocketReadCloser) Close() error {
 	return r.ws.Close()
 }
 
+// Append appends data from r to the file at the given URL.
 func Append(u *url.URL, r io.Reader) error {
 	w, err := OpenAppend(u)
 	if err != nil {
@@ -63,6 +70,9 @@ func Append(u *url.URL, r io.Reader) error {
 	return err
 }
 
+// OpenAppend opens a WebSocket to the file at the given URL (which must point
+// be handled by httpfstream's HTTP handler) and returns an io.WriteCloser that writes
+// (via the WebSocket) to that file.
 func OpenAppend(u *url.URL) (io.WriteCloser, error) {
 	ws, resp, err := newClient(u, "APPEND")
 	if err != nil {
@@ -80,6 +90,7 @@ type appendWriteCloser struct {
 	ws *websocket.Conn
 }
 
+// Write implements io.Writer.
 func (pw *appendWriteCloser) Write(p []byte) (n int, err error) {
 	pw.ws.SetWriteDeadline(time.Now().Add(writeWait))
 	w, err := pw.ws.NextWriter(websocket.OpText)
@@ -90,6 +101,7 @@ func (pw *appendWriteCloser) Write(p []byte) (n int, err error) {
 	return w.Write(p)
 }
 
+// Write implements io.Closer.
 func (pw *appendWriteCloser) Close() error {
 	return pw.ws.Close()
 }
