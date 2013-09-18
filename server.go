@@ -3,7 +3,7 @@ package httpfstream
 import (
 	"bytes"
 	"errors"
-	"github.com/sqs/go-websocket/websocket"
+	"github.com/garyburd/go-websocket/websocket"
 	"io"
 	"log"
 	"net/http"

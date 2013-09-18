@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/sqs/go-websocket/websocket"
+	"github.com/garyburd/go-websocket/websocket"
 	"io"
 	"net"
 	"net/http"
