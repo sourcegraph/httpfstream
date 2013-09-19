@@ -2,6 +2,7 @@ package httpfstream
 
 import (
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"github.com/garyburd/go-websocket/websocket"
@@ -107,7 +108,16 @@ func (pw *appendWriteCloser) Close() error {
 }
 
 func newClient(u *url.URL, method string) (*websocket.Conn, *http.Response, error) {
-	c, err := net.Dial("tcp", u.Host)
+	var c net.Conn
+	var err error
+	switch u.Scheme {
+	case "http":
+		c, err = net.Dial("tcp", u.Host)
+	case "https":
+		c, err = tls.Dial("tcp", u.Host, nil)
+	default:
+		return nil, nil, errors.New("unrecognized URL scheme")
+	}
 	if err != nil {
 		return nil, nil, err
 	}
