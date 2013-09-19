@@ -274,6 +274,12 @@ func (h Handler) Append(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.removeWriter(path)
 
+	err = os.MkdirAll(filepath.Dir(path), 0755)
+	if err != nil {
+		http.Error(w, "failed to create dir: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
 	if err != nil {
 		http.Error(w, "failed to open destination file for writing: "+err.Error(), http.StatusInternalServerError)
