@@ -152,3 +152,27 @@ type fixedReader struct {
 func (r *fixedReader) Read(p []byte) (n int, err error) {
 	return io.LimitReader(r.R, int64(r.N)).Read(p)
 }
+
+func TestHostPort(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"http://example.com", "example.com:http"},
+		{"https://example.com", "example.com:https"},
+		{"http://example.com:1234", "example.com:1234"},
+		{"https://example.com:1234", "example.com:1234"},
+	}
+
+	for _, test := range tests {
+		u, err := url.Parse(test.input)
+		if err != nil {
+			t.Errorf("%s: url.Parse: %s", test.input, err)
+			continue
+		}
+		got := hostPort(u)
+		if test.expected != got {
+			t.Errorf("%s: want %q, got %q", test.input, test.expected, got)
+		}
+	}
+}

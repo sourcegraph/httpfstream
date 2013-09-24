@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -110,11 +111,12 @@ func (pw *appendWriteCloser) Close() error {
 func newClient(u *url.URL, method string) (*websocket.Conn, *http.Response, error) {
 	var c net.Conn
 	var err error
+	hostport := hostPort(u)
 	switch u.Scheme {
 	case "http":
-		c, err = net.Dial("tcp", u.Host)
+		c, err = net.Dial("tcp", hostport)
 	case "https":
-		c, err = tls.Dial("tcp", u.Host, nil)
+		c, err = tls.Dial("tcp", hostport, nil)
 	default:
 		return nil, nil, errors.New("unrecognized URL scheme")
 	}
@@ -122,6 +124,13 @@ func newClient(u *url.URL, method string) (*websocket.Conn, *http.Response, erro
 		return nil, nil, err
 	}
 	return websocket.NewClient(c, u, http.Header{xVerb: []string{method}}, readBufSize, writeBufSize)
+}
+
+func hostPort(u *url.URL) string {
+	if strings.Contains(u.Host, ":") {
+		return u.Host
+	}
+	return u.Host + ":" + u.Scheme
 }
 
 // errorFromResponse returns err if err != nil, or another non-nil error if resp
