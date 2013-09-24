@@ -79,7 +79,11 @@ func OpenAppend(u *url.URL) (io.WriteCloser, error) {
 	ws, resp, err := newClient(u, "APPEND")
 	if err != nil {
 		if err == websocket.ErrBadHandshake {
-			return nil, errorFromResponse(resp, nil)
+			err2 := errorFromResponse(resp, nil)
+			if err2 != nil {
+				return nil, err2
+			}
+			return nil, err
 		}
 		return nil, err
 	}
