@@ -44,7 +44,7 @@ and FOLLOW arbitrary file paths. Run with `-h` for more information.
 For example, first install the commands:
 
 ```bash
-$ go install github.com/sourcegraph/httpfstream/cmd/...
+$ go get github.com/sourcegraph/httpfstream/cmd/...
 ```
 
 Then run the server with:
