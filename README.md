@@ -7,6 +7,12 @@ downloads of files, as well as persistence and a standalone server.
 It allows a writer to `APPEND` data to a resource via a WebSocket and multiple
 readers to `FOLLOW` updates to the resource using WebSockets.
 
+Only one simultaneous appender is allowed for each resource. If there are no
+appenders at an existing resource, the server returns the full data in an HTTP
+200 (bypassing WebSockets) to a follower. If the resource has never been written
+to, the server responds to a follower with HTTP 404.
+
+
 * [Documentation on Sourcegraph](https://sourcegraph.com/github.com/sourcegraph/httpfstream)
 
 [![Build Status](https://travis-ci.org/sourcegraph/httpfstream.png?branch=master)](https://travis-ci.org/sourcegraph/httpfstream)
@@ -62,10 +68,6 @@ baz
 
 Notice that the `httpfstream-follow` window echoes what you type into the
 appender window. Once you close the appender, the follower quits as well.
-
-If there are no appenders at an existing resource, the server returns the full
-data in an HTTP 200 (bypassing WebSockets). If the resource has never been
-written to, the server responds with HTTP 404.
 
 
 ### As a Go library
