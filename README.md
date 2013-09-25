@@ -12,7 +12,6 @@ appenders at an existing resource, the server returns the full data in an HTTP
 200 (bypassing WebSockets) to a follower. If the resource has never been written
 to, the server responds to a follower with HTTP 404.
 
-
 * [Documentation on Sourcegraph](https://sourcegraph.com/github.com/sourcegraph/httpfstream)
 
 [![Build Status](https://travis-ci.org/sourcegraph/httpfstream.png?branch=master)](https://travis-ci.org/sourcegraph/httpfstream)
@@ -42,7 +41,13 @@ library.
 The command `httpfstream-server` launches a server that allows clients to APPEND
 and FOLLOW arbitrary file paths. Run with `-h` for more information.
 
-For example, run the server with:
+For example, first install the commands:
+
+```bash
+$ go install github.com/sourcegraph/httpfstream/cmd/...
+```
+
+Then run the server with:
 
 ```bash
 $ httpfstream-server -root=/tmp/httpfstream -http=:8080
