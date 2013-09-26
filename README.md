@@ -20,7 +20,7 @@ to, the server responds to a follower with HTTP 404.
 [![top func](https://sourcegraph.com/api/repos/github.com/sourcegraph/httpfstream/badges/top-func.png)](https://sourcegraph.com/github.com/sourcegraph/httpfstream)
 [![library users](https://sourcegraph.com/api/repos/github.com/sourcegraph/httpfstream/badges/library-users.png)](https://sourcegraph.com/github.com/sourcegraph/httpfstream)
 [![status](https://sourcegraph.com/api/repos/github.com/sourcegraph/httpfstream/badges/status.png)](https://sourcegraph.com/github.com/sourcegraph/httpfstream)
-
+[![Views in the last 24 hours](https://sourcegraph.com/api/repos/github.com/sourcegraph/httpfstream/counters/views-24h.png)](https://sourcegraph.com/github.com/sourcegraph/httpfstream)
 
 Installation
 ------------
