@@ -77,6 +77,9 @@ func Append(u *url.URL, r io.Reader) error {
 // (via the WebSocket) to that file.
 func OpenAppend(u *url.URL) (io.WriteCloser, error) {
 	ws, resp, err := newClient(u, "APPEND")
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		if err == websocket.ErrBadHandshake {
 			err2 := errorFromResponse(resp, nil)
