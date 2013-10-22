@@ -74,7 +74,7 @@ const (
 
 var (
 	followKeepaliveInterval = 3 * time.Second
-	readWait                = 5 * time.Second
+	readWait                = 25 * time.Second
 	writeWait               = 5 * time.Second
 )
 
